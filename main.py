@@ -33,15 +33,18 @@ async def authenticate(token: str = Depends(token_auth_scheme)):
     return token
 
 async def authorize(request: Request, token: str = Depends(token_auth_scheme), body={}):
-    resource_name = request.url.path.split("/")[-1]
+    resource_name = request.url.path.strip('/').split('/')[0]
     method = request.method.lower()
     resource = await request.json() if method in ["post", "put"] else body
     user = token.credentials
 
-    return await permit.check(user, method, {
+    allowed = await permit.check(user, method, {
         "type": resource_name,
         "attributes": resource
     })
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
 @app.get("/tasks")
 async def get_tasks():
@@ -59,14 +62,16 @@ async def create_task(task: Task, token: str = Depends(token_auth_scheme)):
 
 @app.put("/tasks/{task_id}", dependencies=[Depends(authenticate)])
 async def update_task(task_id: int, task: Task):
+    if task_id > len(tasks):
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.owner = tasks[task_id - 1].owner
     tasks[task_id - 1] = task
     return task
 
 @app.delete("/tasks/{task_id}", dependencies=[Depends(authenticate)])
 async def delete_task(request: Request, task_id: int, token: str = Depends(token_auth_scheme)):
     task = tasks[task_id - 1]
-    if not await authorize(request=request, token=token, body=task.dict()):
-        raise HTTPException(status_code=403, detail="Not authorized")
+    await authorize(request=request, token=token, body=task.dict())
     tasks.remove(task)
     return task
 
